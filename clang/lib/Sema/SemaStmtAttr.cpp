@@ -143,6 +143,7 @@ static Attr *handleLoopHintAttr(Sema &S, Stmt *St, const ParsedAttr &A,
                  .Case("pipeline_initiation_interval",
                        LoopHintAttr::PipelineInitiationInterval)
                  .Case("distribute", LoopHintAttr::Distribute)
+                 .Case("regalloc_protect", LoopHintAttr::RegllocProtect)
                  .Default(LoopHintAttr::Vectorize);
     if (Option == LoopHintAttr::VectorizeWidth) {
       assert((ValueExpr || (StateLoc && StateLoc->getIdentifierInfo())) &&
@@ -168,7 +169,8 @@ static Attr *handleLoopHintAttr(Sema &S, Stmt *St, const ParsedAttr &A,
                Option == LoopHintAttr::VectorizePredicate ||
                Option == LoopHintAttr::Unroll ||
                Option == LoopHintAttr::Distribute ||
-               Option == LoopHintAttr::PipelineDisabled) {
+               Option == LoopHintAttr::PipelineDisabled ||
+               Option == LoopHintAttr::RegllocProtect) {
       assert(StateLoc && StateLoc->getIdentifierInfo() &&
              "Loop hint must have an argument");
       if (StateLoc->getIdentifierInfo()->isStr("disable"))

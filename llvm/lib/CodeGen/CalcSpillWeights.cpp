@@ -10,6 +10,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/CodeGen/LiveInterval.h"
 #include "llvm/CodeGen/LiveIntervals.h"
+#include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineLoopInfo.h"
@@ -20,6 +21,10 @@
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/CodeGen/VirtRegMap.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/CFG.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
@@ -29,6 +34,52 @@
 using namespace llvm;
 
 #define DEBUG_TYPE "calcspillweights"
+
+/// Return the spill weight scale factor requested by a
+/// \c llvm.loop.regalloc.protect annotation on any loop enclosing \p MBB.
+/// Returns 0 if no such annotation is present (no scaling).
+///
+/// The annotation is attached to the loop latch's back-edge branch as part of
+/// the canonical llvm.loop metadata node.  We reach it via
+/// MachineBasicBlock::getBasicBlock() which gives the IR counterpart, then
+/// walk the IR predecessors of the loop header to find the latch.
+static float getRegllocProtectScale(const MachineBasicBlock *MBB,
+                                    const MachineLoopInfo &MLI) {
+  for (const MachineLoop *Loop = MLI.getLoopFor(MBB); Loop;
+       Loop = Loop->getParentLoop()) {
+    const MachineBasicBlock *MHeader = Loop->getHeader();
+    if (!MHeader)
+      continue;
+    const BasicBlock *IRHeader = MHeader->getBasicBlock();
+    if (!IRHeader)
+      continue;
+
+    // The loop metadata node lives on the latch terminator.  The latch is a
+    // predecessor of the header that is inside the loop (i.e. has the header
+    // as a successor and is dominated by it -- the back-edge).
+    for (const BasicBlock *Pred : predecessors(IRHeader)) {
+      const MDNode *LoopMD =
+          Pred->getTerminator()->getMetadata(LLVMContext::MD_loop);
+      if (!LoopMD || LoopMD->getNumOperands() < 1)
+        continue;
+      // Canonical loop metadata: operand 0 is a self-reference.
+      if (LoopMD->getOperand(0).get() != LoopMD)
+        continue;
+
+      for (unsigned I = 1, E = LoopMD->getNumOperands(); I < E; ++I) {
+        const MDNode *Node = dyn_cast<MDNode>(LoopMD->getOperand(I));
+        if (!Node || Node->getNumOperands() == 0)
+          continue;
+        const MDString *Name = dyn_cast<MDString>(Node->getOperand(0));
+        if (!Name)
+          continue;
+        if (Name->getString() == "llvm.loop.regalloc.protect")
+          return 10.0f; // 10x spill cost for loop-live variables
+      }
+    }
+  }
+  return 0.0f; // not annotated
+}
 
 void VirtRegAuxInfo::calculateSpillWeightsAndHints() {
   LLVM_DEBUG(dbgs() << "********** Compute Spill Weights **********\n"
@@ -323,6 +374,12 @@ float VirtRegAuxInfo::weightCalcHelper(LiveInterval &LI) {
       // Give extra weight to what looks like a loop induction variable update.
       if (Writes && IsExiting && LIS.isLiveOutOfMBB(LI, MBB))
         Weight *= 3;
+
+      // Honor #pragma clang loop regalloc_protect(enable): multiply the spill
+      // cost of variables used inside annotated loops so the allocator strongly
+      // prefers to keep them in physical registers.
+      if (float Scale = getRegllocProtectScale(MBB, Loops))
+        Weight *= Scale;
 
       TotalWeight += Weight;
     }

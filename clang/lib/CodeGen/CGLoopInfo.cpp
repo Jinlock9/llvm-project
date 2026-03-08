@@ -436,6 +436,16 @@ SmallVector<Metadata *, 4> LoopInfo::createMetadata(
     LoopProperties.push_back(MDNode::get(Ctx, Vals));
   }
 
+  // Setting regalloc_protect hint: signals the register allocator to
+  // preferentially keep variables live in this loop in physical registers.
+  if (Attrs.RegllocProtect == LoopAttributes::Enable) {
+    Metadata *Vals[] = {
+        MDString::get(Ctx, "llvm.loop.regalloc.protect"),
+        ConstantAsMetadata::get(
+            ConstantInt::get(llvm::Type::getInt1Ty(Ctx), 1))};
+    LoopProperties.push_back(MDNode::get(Ctx, Vals));
+  }
+
   llvm::append_range(LoopProperties, AdditionalLoopProperties);
   return createFullUnrollMetadata(Attrs, LoopProperties, HasUserTransforms);
 }
@@ -448,7 +458,8 @@ LoopAttributes::LoopAttributes(bool IsParallel)
       VectorizeScalable(LoopAttributes::Unspecified), InterleaveCount(0),
       UnrollCount(0), UnrollAndJamCount(0),
       DistributeEnable(LoopAttributes::Unspecified), PipelineDisabled(false),
-      PipelineInitiationInterval(0), CodeAlign(0), MustProgress(false) {}
+      PipelineInitiationInterval(0), CodeAlign(0), MustProgress(false),
+      RegllocProtect(LoopAttributes::Unspecified) {}
 
 void LoopAttributes::clear() {
   IsParallel = false;
@@ -466,6 +477,7 @@ void LoopAttributes::clear() {
   PipelineInitiationInterval = 0;
   CodeAlign = 0;
   MustProgress = false;
+  RegllocProtect = LoopAttributes::Unspecified;
 }
 
 LoopInfo::LoopInfo(BasicBlock *Header, const LoopAttributes &Attrs,
@@ -490,7 +502,8 @@ LoopInfo::LoopInfo(BasicBlock *Header, const LoopAttributes &Attrs,
       Attrs.UnrollEnable == LoopAttributes::Unspecified &&
       Attrs.UnrollAndJamEnable == LoopAttributes::Unspecified &&
       Attrs.DistributeEnable == LoopAttributes::Unspecified &&
-      Attrs.CodeAlign == 0 && !StartLoc && !EndLoc && !Attrs.MustProgress)
+      Attrs.CodeAlign == 0 && !StartLoc && !EndLoc && !Attrs.MustProgress &&
+      Attrs.RegllocProtect == LoopAttributes::Unspecified)
     return;
 
   TempLoopID = MDNode::getTemporary(Header->getContext(), {});
@@ -677,6 +690,9 @@ void LoopInfoStack::push(BasicBlock *Header, clang::ASTContext &Ctx,
       case LoopHintAttr::PipelineDisabled:
         setPipelineDisabled(true);
         break;
+      case LoopHintAttr::RegllocProtect:
+        setRegllocProtect(false);
+        break;
       case LoopHintAttr::UnrollCount:
       case LoopHintAttr::UnrollAndJamCount:
       case LoopHintAttr::VectorizeWidth:
@@ -703,6 +719,9 @@ void LoopInfoStack::push(BasicBlock *Header, clang::ASTContext &Ctx,
         break;
       case LoopHintAttr::Distribute:
         setDistributeState(true);
+        break;
+      case LoopHintAttr::RegllocProtect:
+        setRegllocProtect(true);
         break;
       case LoopHintAttr::UnrollCount:
       case LoopHintAttr::UnrollAndJamCount:
@@ -732,6 +751,7 @@ void LoopInfoStack::push(BasicBlock *Header, clang::ASTContext &Ctx,
       case LoopHintAttr::Distribute:
       case LoopHintAttr::PipelineDisabled:
       case LoopHintAttr::PipelineInitiationInterval:
+      case LoopHintAttr::RegllocProtect:
         llvm_unreachable("Options cannot be used to assume mem safety.");
         break;
       }
@@ -754,6 +774,7 @@ void LoopInfoStack::push(BasicBlock *Header, clang::ASTContext &Ctx,
       case LoopHintAttr::PipelineDisabled:
       case LoopHintAttr::PipelineInitiationInterval:
       case LoopHintAttr::VectorizePredicate:
+      case LoopHintAttr::RegllocProtect:
         llvm_unreachable("Options cannot be used with 'full' hint.");
         break;
       }
@@ -795,6 +816,7 @@ void LoopInfoStack::push(BasicBlock *Header, clang::ASTContext &Ctx,
       case LoopHintAttr::Interleave:
       case LoopHintAttr::Distribute:
       case LoopHintAttr::PipelineDisabled:
+      case LoopHintAttr::RegllocProtect:
         llvm_unreachable("Options cannot be assigned a value.");
         break;
       }

@@ -84,6 +84,11 @@ struct LoopAttributes {
 
   /// Value for whether the loop is required to make progress.
   bool MustProgress;
+
+  /// Value for llvm.loop.regalloc.protect metadata.
+  /// When Enable, signals the register allocator to treat variables live
+  /// in this loop as high-priority, preventing spills into the loop body.
+  LVEnableState RegllocProtect;
 };
 
 /// Information used when generating a structured loop.
@@ -297,6 +302,12 @@ public:
 
   /// Set no progress for the next loop pushed.
   void setMustProgress(bool P) { StagedAttrs.MustProgress = P; }
+
+  /// Set regalloc protection for the next loop pushed.
+  void setRegllocProtect(bool Enable = true) {
+    StagedAttrs.RegllocProtect =
+        Enable ? LoopAttributes::Enable : LoopAttributes::Disable;
+  }
 
   /// Returns true if there is LoopInfo on the stack.
   bool hasInfo() const { return !Active.empty(); }
