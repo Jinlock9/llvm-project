@@ -3611,6 +3611,33 @@ Instruction *InstCombinerImpl::visitGetElementPtrInst(GetElementPtrInst &GEP) {
     }
   }
 
+  // For a canonical ptradd with a negative constant offset, nusw only
+  // requires that the unsigned base address is at least the offset magnitude.
+  const APInt *COff;
+  if (!GEP.hasNoUnsignedSignedWrap() && GEP.getNumIndices() == 1 &&
+      match(&GEP, m_PtrAdd(m_Value(), m_APInt(COff))) && COff->isNegative()) {
+    unsigned AS = GEP.getPointerAddressSpace();
+    unsigned IdxWidth = DL.getIndexSizeInBits(AS);
+    if (COff->getBitWidth() == IdxWidth) {
+      KnownBits Known = computeKnownBits(PtrOp, &GEP).trunc(IdxWidth);
+      APInt MinAddr = Known.getMinValue();
+
+      // KnownBits does not represent a non-zero fact on its own. If null has
+      // address zero, combine known non-nullness with known alignment.
+      if (MinAddr.isZero() && DL.getNullPtrValue(AS).trunc(IdxWidth).isZero() &&
+          isKnownNonZero(PtrOp, SQ.getWithInstruction(&GEP))) {
+        MinAddr = APInt::getOneBitSet(
+            IdxWidth, std::min(Known.countMinTrailingZeros(), IdxWidth - 1));
+      }
+
+      if ((-*COff).ule(MinAddr)) {
+        GEP.setNoWrapFlags(GEP.getNoWrapFlags() |
+                           GEPNoWrapFlags::noUnsignedSignedWrap());
+        return &GEP;
+      }
+    }
+  }
+
   // nusw + nneg -> nuw
   if (GEP.hasNoUnsignedSignedWrap() && !GEP.hasNoUnsignedWrap() &&
       all_of(GEP.indices(), [&](Value *Idx) {

@@ -432,7 +432,7 @@ define i32 @load_after_memset_0_offset_too_large(ptr %a) {
 define i32 @load_after_memset_0_offset_negative(ptr %a) {
 ; CHECK-LABEL: @load_after_memset_0_offset_negative(
 ; CHECK-NEXT:    call void @llvm.memset.p0.i64(ptr noundef nonnull align 1 dereferenceable(16) [[A:%.*]], i8 0, i64 16, i1 false)
-; CHECK-NEXT:    [[GEP:%.*]] = getelementptr i8, ptr [[A]], i64 -1
+; CHECK-NEXT:    [[GEP:%.*]] = getelementptr nusw i8, ptr [[A]], i64 -1
 ; CHECK-NEXT:    [[V:%.*]] = load i32, ptr [[GEP]], align 4
 ; CHECK-NEXT:    ret i32 [[V]]
 ;
